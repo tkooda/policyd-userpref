@@ -1,0 +1,6 @@
+#!/bin/sh
+exec 2>&1
+exec chpst -e ./env/ sh -c '
+  exec tcpsvd -l0 -unobody -c1 -E 127.0.0.1 "${PORT}" \
+    ./bin/policyd-userpref
+'

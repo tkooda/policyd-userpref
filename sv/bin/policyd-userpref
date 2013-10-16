@@ -1,0 +1,114 @@
+#!/usr/bin/python
+
+## tkooda : 2008-04-11 : pypolicyd : python postfix policy daemon to accept/reject messages (e.g. skipping rest of (e.g. reject_rbl_client) checks in smtpd_recipient_restrictions) on per-sender+recipient basis
+
+import os
+import sys
+import re
+
+
+DOCROOT = "/etc/postfix/vmap/enabled"
+
+def warn( msg ):
+	print >>sys.stderr, "policyd-userpref: warning: pid %d : %s" % ( os.getpid(), msg )
+	sys.stderr.flush()
+
+def bail( act, infostr="" ):
+	extra = ""
+	if infostr:
+		extra = " : info=%s" % infostr
+	print >>sys.stderr, "policyd-userpref: info: pid %d : %s: action=%s%s" % ( os.getpid(), args, act, extra )
+	sys.stderr.flush()
+	sys.stdout.write( "action=%s\n\n" % act )
+	sys.stdout.flush()
+	sys.exit( 0 )
+
+
+var_sender = False
+var_recipt = False
+args = ""
+line = sys.stdin.readline()
+while line:
+	if len( line ) < 2:
+		break
+#	print >>sys.stderr, "DEBUG: line:", line ,
+	line = line.rstrip( "\n" )
+	args += line + ", "
+	if line[:7] == "sender=":
+		var_sender = line[7:].lower()
+	elif line[:10] == "recipient=":
+		var_recipt = line[10:].lower()
+	line = sys.stdin.readline()
+
+#print >>sys.stderr, "DEBUG: args: %s" % args
+#print >>sys.stderr, "DEBUG: from:", var_sender
+#print >>sys.stderr, "DEBUG: to:", var_recipt
+
+# validate args ..
+if not var_sender:
+   bail( "dunno", "missing_sender" )
+if not var_recipt:
+   bail( "dunno", "missing_recipient" )
+   
+if "/" in var_recipt: # dosn't catch unicode chars?? -use regex-valid instead?
+   bail( "dunno", "invalid_recipient" )
+
+ud = var_recipt.split( "@" )
+
+if len( ud ) != 2:
+   bail( "dunno", "recipient_has_multiple_users" )
+
+var_recipt_user = ud[0]
+var_recipt_domain = ud[1]
+
+# check for user prefs ..
+path_user = os.path.join( DOCROOT, var_recipt_domain, var_recipt_user )
+if not os.path.isdir( path_user ):
+   bail( "dunno", "missing_user_prefs: %s" % path_user )
+
+# mailfrom_allow ..
+path_user_mailfrom_allow = os.path.join( path_user, "mailfrom_allow" )
+if os.path.isfile( path_user_mailfrom_allow ):
+	try:
+		f = open( path_user_mailfrom_allow )
+	except:
+		bail( "dunno", "error_opening_mailfrom_allow: %s" % path_user_mailfrom_allow )
+	for line in f:
+		if line[0] == "#":
+			continue
+		line = line.strip()
+		try:
+			r = re.compile( line, re.IGNORECASE ).match( var_sender )
+		except:
+			warn( "invalid regex: %s" % line )
+			continue
+		if r:
+			bail( "permit", "found matching regex ('%s') for '%s' in '%s'" \
+				  % ( line, var_sender, path_user_mailfrom_allow ) )
+	f.close()
+
+# mailfrom_deny ..
+path_user_mailfrom_deny = os.path.join( path_user, "mailfrom_deny" )
+if os.path.isfile( path_user_mailfrom_deny ):
+	try:
+		f = open( path_user_mailfrom_deny )
+	except:
+		bail( "dunno", "error_opening_mailfrom_deny: %s" % path_user_mailfrom_deny )
+	for line in f:
+		if line[0] == "#":
+			continue
+		line = line.strip()
+		try:
+			r = re.compile( line, re.IGNORECASE ).match( var_sender )
+		except:
+			warn( "invalid regex: %s" % line )
+			continue
+		if r:
+			bail( "reject", "found matching ('%s') regex for '%s' in '%s'" \
+				  % ( line, var_sender, path_user_mailfrom_deny ) )
+	f.close()
+
+## tkooda : 2008-04-24 : 
+#bail( "dunno" )
+bail( "dunno", "found_user_prefs: %s" % path_user )
+
